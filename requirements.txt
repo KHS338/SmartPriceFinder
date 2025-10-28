@@ -1,0 +1,13 @@
+requests
+beautifulsoup4
+lxml
+pandas
+python-dotenv
+sqlalchemy
+fastapi        
+uvicorn        
+selenium       # for dynamic sites
+webdriver-manager
+rapidfuzz      # fuzzy matching
+python-dateutil
+selenium
