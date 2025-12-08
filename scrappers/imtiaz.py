@@ -27,6 +27,7 @@ def create_driver(headless=False):
     options.add_argument("--disable-dev-shm-usage")
     # optional: make browser look less like automation
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--window-size=1366,900")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 def parse_price(text):
@@ -44,6 +45,100 @@ def parse_price(text):
             return None
     return None
 
+def auto_select_location(driver, wait, prefer_city="Karachi", max_wait=8):
+    """
+    Attempt to automatically select a delivery city/area.
+    Strategy:
+      - If an 'Open' aria-label button exists for autocomplete dropdowns, click the second one (area).
+      - Wait for the listbox options to appear and click the first option.
+      - Find an enabled 'Select' button and click it.
+      - If any step fails, function returns gracefully (script continues).
+    """
+    try:
+        print("[i] Looking for location selection modal...")
+        # small wait: the modal/popover may take a moment to appear
+        time.sleep(1.0)
+
+        # Find all 'Open' buttons for autocomplete and click the area dropdown (prefer last)
+        open_buttons = driver.find_elements(By.CSS_SELECTOR, "button[aria-label='Open']")
+        if open_buttons:
+            # attempt to click last 'Open' button (likely Area / Sub Region)
+            try:
+                btn = open_buttons[-1]
+                driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                time.sleep(0.2)
+                btn.click()
+                print("[i] Clicked area dropdown button.")
+            except Exception as e:
+                print("[!] Could not click area dropdown button:", e)
+
+            # wait for options to appear
+            try:
+                # possible selectors for list items in MUI popper/listbox
+                list_item_locator = (By.XPATH, "//ul[@role='listbox']//li | //div[contains(@class,'MuiAutocomplete-popper')]//li | //li[contains(@role,'option')]")
+                WebDriverWait(driver, max_wait).until(EC.presence_of_element_located(list_item_locator))
+                time.sleep(0.3)
+                options = driver.find_elements(*list_item_locator)
+                if options:
+                    # click the first visible option
+                    clicked = False
+                    for opt in options:
+                        try:
+                            if opt.is_displayed():
+                                driver.execute_script("arguments[0].scrollIntoView(true);", opt)
+                                time.sleep(0.15)
+                                opt.click()
+                                clicked = True
+                                print("[i] Selected first area option from dropdown.")
+                                break
+                        except Exception:
+                            continue
+                    if not clicked:
+                        print("[i] Found options but couldn't click any; continuing.")
+                else:
+                    print("[i] No options found in dropdown; continuing.")
+            except Exception as e:
+                print("[i] Timeout or error waiting for area options:", e)
+
+        else:
+            print("[i] No 'Open' dropdown buttons found — location modal may not be present.")
+
+        # After picking area, click the 'Select' button (enabled one)
+        try:
+            # wait a moment for 'Select' to become enabled
+            time.sleep(0.5)
+            # find all buttons with text 'Select' and click the first enabled one
+            select_buttons = driver.find_elements(By.XPATH, "//button[normalize-space()='Select']")
+            clicked_select = False
+            for sb in select_buttons:
+                try:
+                    disabled = sb.get_attribute("disabled")
+                    classes = (sb.get_attribute("class") or "")
+                    if disabled is None and "Mui-disabled" not in classes and "disabled" not in classes:
+                        driver.execute_script("arguments[0].scrollIntoView(true);", sb)
+                        time.sleep(0.15)
+                        sb.click()
+                        clicked_select = True
+                        print("[i] Clicked 'Select' button to confirm location.")
+                        break
+                except Exception:
+                    continue
+            if not clicked_select:
+                print("[i] No enabled 'Select' button found (maybe already set).")
+        except Exception as e:
+            print("[!] Error while trying to click Select button:", e)
+
+        # Wait a bit for the site to process location and load products
+        wait_seconds = 7
+        print(f"[i] Waiting {wait_seconds} seconds for products to load after location selection...")
+        time.sleep(wait_seconds)
+    except Exception as e:
+        # never fail the whole scraper if location handling fails
+        print("[!] auto_select_location error:", e)
+    finally:
+        # short extra pause to let any final XHRs settle
+        time.sleep(0.5)
+
 def scrape_search(query="pepsi", max_pages=3, headless=False, out_csv="imtiaz_search_results.csv"):
     driver = create_driver(headless=headless)
     wait = WebDriverWait(driver, 15)
@@ -53,16 +148,19 @@ def scrape_search(query="pepsi", max_pages=3, headless=False, out_csv="imtiaz_se
         url = f"{BASE}/search?q={query}"
         driver.get(url)
         print(f"[i] Opened {url}")
-        print("[i] If site asks for location/branch selection, please do that in the opened browser window now.")
-        input("Press Enter here after the search results are visible in the browser (or if none required) ...")
+        # automatically try to select location (no user input)
+        auto_select_location(driver, wait)
 
         page_no = 1
         while page_no <= max_pages:
-            # Wait for product cards to appear
-            # Product cards have id="product-item-<num>"
+            # Wait for product cards to appear (give a bit longer because items can load dynamically)
             product_selector = "div[id^='product-item-']"
-            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, product_selector)))
-            time.sleep(0.5)  # let JS finish rendering
+            try:
+                wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, product_selector)))
+            except Exception:
+                # if timeout, still attempt to continue; we'll get zero cards then stop
+                print("[i] Timeout waiting for product cards - continuing anyway")
+            time.sleep(0.8)  # let JS finish rendering
 
             cards = driver.find_elements(By.CSS_SELECTOR, product_selector)
             print(f"[i] Found {len(cards)} cards on page {page_no}")
@@ -111,7 +209,6 @@ def scrape_search(query="pepsi", max_pages=3, headless=False, out_csv="imtiaz_se
                                 price = parse_price(maybe2.text)
                             except Exception:
                                 price = None
-
 
                     # image url
                     img_url = ""

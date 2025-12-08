@@ -10,4 +10,6 @@ selenium       # for dynamic sites
 webdriver-manager
 rapidfuzz      # fuzzy matching
 python-dateutil
-selenium
+streamlit      # interactive dashboard
+plotly         # interactive charts
+scikit-learn   # ML for deal analysis
