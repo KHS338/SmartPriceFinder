@@ -72,6 +72,14 @@ The unified product comparison data is available in:
 fullproductscsvs/unified_products_with_price_comparison.csv
 ```
 
+### Running the Dashboard
+
+To launch the interactive price comparison dashboard:
+```bash
+# Run the main dashboard
+streamlit run dashboard.py
+```
+
 ## Data Files
 
 The project maintains several CSV files:
